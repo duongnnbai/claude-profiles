@@ -93,10 +93,19 @@ profile its own identity in three places:
    and name from the shortcut that matches the window's AUMID; without one it falls back to
    Claude's own icon. Clicking the shortcut, or the button once pinned, opens that profile.
 3. **The window icon** (`WM_SETICON`), which Alt-Tab and the hover preview use.
+4. **The tray icon.** Claude draws it itself from the package's `Tray-Win32.ico`, which is
+   read-only and shared by every profile, so the file cannot be recolored. Instead the app
+   replaces the icon after the fact: Windows identifies a tray icon by its owner window and a
+   small numeric id, Electron registers it from a hidden `Electron_NotifyIconHostWindow`, and a
+   `Shell_NotifyIcon(NIM_MODIFY)` aimed at that window from another process is accepted. The app
+   tries ids 0 to 15 until one is accepted (Electron's numbering is not public), remembers it,
+   and sets the profile's colored icon and `Claude <Name>` as the tooltip.
 
 Re-applying on a timer matters because Claude creates a new window when you reopen it from the
-tray. While Claude Profiles is closed, a reopened window shows the orange icon until a profile is
-launched again or the app is opened. Your default Claude is never touched.
+Re-applying on a timer matters because Claude creates a new window when you reopen it from the
+tray, and redraws its own tray icon on a light/dark mode switch. While Claude Profiles is closed,
+a reopened window shows the orange icon until a profile is launched again or the app is opened.
+Your default Claude is never touched.
 
 ## Detecting running profiles
 

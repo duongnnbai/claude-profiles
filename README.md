@@ -37,8 +37,9 @@ This app wraps that idea in a small window with one card per profile.
 - **Your existing Claude is never touched.** It appears as the *Default* card.
 - **Claude Code isolation too.** Each profile gets its own `CLAUDE_CONFIG_DIR`, so the Code tab inside
   Desktop does not share the default `~/.claude` sign-in.
-- **A colored taskbar button per profile** (Windows). Each running profile gets its own button
-  with its color, instead of one more orange Claude icon.
+- **A colored taskbar button and tray icon per profile** (Windows). Each running profile gets its
+  own taskbar button and its own system-tray icon in its color, named after the profile, instead of
+  one more identical Claude icon.
 - **A shortcut per profile**, with a colored icon: a Desktop shortcut on Windows, an app in
   `~/Applications` on macOS. It opens the profile directly, or focuses it if it is already running.
 - **Nothing is copied.** Profiles start your installed Claude, so Claude updates reach every

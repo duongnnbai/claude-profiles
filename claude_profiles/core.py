@@ -207,12 +207,18 @@ def _brand_when_shown(backend, profile: Profile, timeout: float = 30.0) -> None:
     if profile.is_default or not backend.supports_taskbar_branding:
         return
     deadline = time.monotonic() + timeout
+    tray_deadline = None   # the tray icon can appear a little after the window
     try:
         while time.monotonic() < deadline:
             pid = backend.running_map().get(profile.key)
             if pid and brand_profile(backend, profile, pid):
-                return
-            time.sleep(0.2)
+                if backend.tray_branded(pid):
+                    return
+                if tray_deadline is None:
+                    tray_deadline = time.monotonic() + 10
+                elif time.monotonic() >= tray_deadline:
+                    return
+            time.sleep(0.2 if tray_deadline is None else 0.5)
     except Exception:
         pass
 

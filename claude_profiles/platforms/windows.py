@@ -241,6 +241,7 @@ class WindowsBackend(Backend):
         self._package = None
         self._package_time = 0.0
         self._registered = {}   # slug -> registration description already checked this run
+        self._tray_branded = set()   # pids whose tray icon carries their profile color
 
     # ---- The installed Claude (MSIX)
 
@@ -431,8 +432,25 @@ class WindowsBackend(Backend):
                     win_shell.set_window_icon(hwnd, ico)
                     shown += 1
             if shown or time.monotonic() >= deadline:
+                self.brand_tray(profile, pid, ico)
                 return shown
             time.sleep(0.15)
+
+    def brand_tray(self, profile, pid: int, ico: Path) -> bool:
+        """Give the profile's tray icon its color and name. Claude redraws its own icon now and
+        then (theme change, reopened window), so this is re-applied with the taskbar branding."""
+        done = False
+        for hwnd in win_shell.tray_host_windows(pid):
+            if win_shell.set_tray_icon(hwnd, ico, f'Claude {profile.name}') is not None:
+                done = True
+        if done:
+            self._tray_branded.add(pid)
+        else:
+            self._tray_branded.discard(pid)
+        return done
+
+    def tray_branded(self, pid: int) -> bool:
+        return pid in self._tray_branded
 
     # ---- claude:// sign-in link routing (experimental)
 

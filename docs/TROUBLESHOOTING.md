@@ -82,7 +82,7 @@ $env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"; claude
 CLAUDE_CONFIG_DIR=~/.claude-work claude
 ```
 
-## A profile's taskbar button is orange instead of its color (Windows)
+## A profile's taskbar button or tray icon is orange instead of its color (Windows)
 
 The color is applied when the profile starts, and every few seconds while Claude Profiles is open.
 If you reopened a profile from the system tray while Claude Profiles was closed, open Claude
@@ -90,7 +90,12 @@ Profiles (or click the profile's shortcut) and the button turns its color again 
 seconds. After changing a profile's color, quit and relaunch it if the button keeps the old color:
 Explorer caches taskbar icons.
 
-On macOS every profile shows Claude's own icon in the Dock; colored Dock icons are not supported.
+The tray icon works the same way. Claude redraws its own white icon when Windows switches between
+light and dark mode or when the window is reopened from the tray; the profile color comes back the
+next time Claude Profiles re-applies it. The tray icon of your default Claude is never changed.
+
+On macOS every profile shows Claude's own icon in the Dock and in the menu bar; colored Dock or
+menu bar icons are not supported there.
 
 ## How do I back up or move a profile?
 

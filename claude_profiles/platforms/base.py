@@ -80,6 +80,10 @@ class Backend:
     def brand_windows(self, profile, pid: int, python: Path, args: list, wait: float = 0.0) -> int:
         return 0
 
+    def tray_branded(self, pid: int) -> bool:
+        """Whether the process's tray icon already carries the profile's color (True where unsupported)."""
+        return True
+
     # claude:// sign-in routing (Windows only)
     def route_slug(self) -> str:
         return ''

@@ -179,6 +179,15 @@ class WindowsShellTests(unittest.TestCase):
             self.assertEqual(out, 'ClaudeProfiles.Profile.T')
         self.assertIsNone(win_shell.shortcut_description(Path(tmp) / 'missing.lnk'))
 
+    def test_tray_icon_on_unknown_window(self):
+        from claude_profiles.platforms import win_shell
+        with tempfile.TemporaryDirectory() as tmp:
+            ico = Path(tmp) / 'i.ico'
+            ico.write_bytes(icons.ico_from_pngs({s: icons.draw_icon('teal', s) for s in (16, 20, 24, 32)}))
+            self.assertIsNone(win_shell.set_tray_icon(0x12345, ico, 'Claude T'))   # no such window: no id accepted
+            self.assertEqual(win_shell.tray_host_windows(0), [])
+        self.assertGreaterEqual(win_shell._tray_icon_size(), 16)
+
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows only')
 class WindowsMigrationTests(unittest.TestCase):

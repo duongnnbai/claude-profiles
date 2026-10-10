@@ -5,6 +5,11 @@ package, so all of them carry the package's AUMID and its orange icon. Giving a
 profile's windows their own AUMID splits them into their own taskbar button, and a
 Start Menu shortcut stamped with the same AUMID tells the taskbar which icon and
 name to draw for that button. WM_SETICON covers Alt-Tab and the hover preview.
+
+The tray icon is drawn by Claude itself from the Store package's Tray-Win32.ico, which cannot
+be edited per profile. Windows identifies a tray icon by (window, id): Electron registers it
+from a hidden Electron_NotifyIconHostWindow, so a Shell_NotifyIcon(NIM_MODIFY) aimed at that
+window swaps the icon and tooltip for the profile's own.
 """
 from __future__ import annotations
 
@@ -58,6 +63,22 @@ _u32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
 _u32.LoadImageW.restype = wintypes.HANDLE
 _u32.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT,
                                      wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)]
+_u32.GetSystemMetrics.argtypes = [ctypes.c_int]
+
+
+class NOTIFYICONDATAW(ctypes.Structure):
+    _fields_ = [('cbSize', wintypes.DWORD), ('hWnd', wintypes.HWND), ('uID', wintypes.UINT),
+                ('uFlags', wintypes.UINT), ('uCallbackMessage', wintypes.UINT), ('hIcon', wintypes.HICON),
+                ('szTip', wintypes.WCHAR * 128), ('dwState', wintypes.DWORD), ('dwStateMask', wintypes.DWORD),
+                ('szInfo', wintypes.WCHAR * 256), ('uVersion', wintypes.UINT), ('szInfoTitle', wintypes.WCHAR * 64),
+                ('dwInfoFlags', wintypes.DWORD), ('guidItem', GUID), ('hBalloonIcon', wintypes.HICON)]
+
+
+_shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+_shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+NIM_MODIFY, NIF_ICON, NIF_TIP = 0x1, 0x2, 0x4
+TRAY_HOST_CLASS = 'Electron_NotifyIconHostWindow'
+TRAY_ID_CANDIDATES = range(0, 16)   # Electron numbers its tray icons from a small base; the exact id is not public
 
 _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 _local = threading.local()
@@ -172,8 +193,7 @@ def shortcut_description(path: Path) -> Optional[str]:
 
 # ---- Windows of a running process ----------------------------------------------
 
-def app_windows(pid: int) -> list:
-    """Electron's top-level windows (class Chrome_WidgetWin_1) of a process."""
+def _windows_of(pid: int, class_name: str) -> list:
     found = []
 
     def visit(hwnd, _lparam):
@@ -182,12 +202,22 @@ def app_windows(pid: int) -> list:
         if owner.value == pid:
             name = ctypes.create_unicode_buffer(64)
             _u32.GetClassNameW(hwnd, name, 64)
-            if name.value == 'Chrome_WidgetWin_1':
+            if name.value == class_name:
                 found.append(hwnd)
         return True
 
     _u32.EnumWindows(_WNDENUMPROC(visit), 0)
     return found
+
+
+def app_windows(pid: int) -> list:
+    """Electron's top-level windows (class Chrome_WidgetWin_1) of a process."""
+    return _windows_of(pid, 'Chrome_WidgetWin_1')
+
+
+def tray_host_windows(pid: int) -> list:
+    """The hidden window Electron registers its tray icons from."""
+    return _windows_of(pid, TRAY_HOST_CLASS)
 
 
 def has_taskbar_button(hwnd) -> bool:
@@ -237,19 +267,64 @@ def stamp_window(hwnd, app_id: str, relaunch_command: str, display_name: str, ic
     return window_app_id(hwnd) == app_id
 
 
+def _load_icon(ico: Path, size: int):
+    key = (str(ico), size)
+    icon = _icons.get(key)
+    if icon is None:
+        icon = _u32.LoadImageW(None, str(ico), 1, size, size, 0x10)   # IMAGE_ICON, LR_LOADFROMFILE
+        if icon:
+            _icons[key] = icon
+    return icon
+
+
 def set_window_icon(hwnd, ico: Path) -> bool:
     """Replace the icon a window shows in Alt-Tab and the taskbar preview."""
     ok = False
     for which, size in ((1, 32), (0, 16)):   # ICON_BIG, ICON_SMALL
-        key = (str(ico), size)
-        icon = _icons.get(key)
-        if icon is None:
-            icon = _u32.LoadImageW(None, str(ico), 1, size, size, 0x10)   # IMAGE_ICON, LR_LOADFROMFILE
-            if not icon:
-                continue
-            _icons[key] = icon
+        icon = _load_icon(ico, size)
+        if not icon:
+            continue
         result = ctypes.c_size_t()
         # SMTO_ABORTIFHUNG: never hang on a busy window.
         if _u32.SendMessageTimeoutW(hwnd, 0x80, which, icon, 0x2, 1000, ctypes.byref(result)):   # WM_SETICON
             ok = True
     return ok
+
+
+# ---- Tray icon ----------------------------------------------------------------
+
+_tray_ids = {}   # tray host hwnd -> the icon id NIM_MODIFY accepted last time
+
+
+def _tray_icon_size() -> int:
+    """The tray draws 16 px icons scaled to the system DPI; pick the matching ICO frame."""
+    try:
+        _u32.GetDpiForSystem.restype = wintypes.UINT
+        dpi = _u32.GetDpiForSystem()
+    except AttributeError:   # before Windows 10 1607
+        dpi = 0
+    return max(16, round(16 * dpi / 96)) if dpi else (_u32.GetSystemMetrics(49) or 16)   # SM_CXSMICON
+
+
+def set_tray_icon(host_hwnd, ico: Path, tip: str) -> Optional[int]:
+    """Swap the tray icon Electron registered from ``host_hwnd``. Returns the icon id it
+    modified, or None if no id was accepted (not an Electron tray window, or no tray icon yet)."""
+    icon = _load_icon(ico, _tray_icon_size())
+    if not icon:
+        return None
+    data = NOTIFYICONDATAW()
+    data.cbSize = ctypes.sizeof(data)
+    data.hWnd = host_hwnd
+    data.uFlags = NIF_ICON | NIF_TIP
+    data.hIcon = icon
+    data.szTip = tip[:127]
+    known = _tray_ids.get(host_hwnd)
+    candidates = [known] if known is not None else []
+    candidates += [i for i in TRAY_ID_CANDIDATES if i != known]
+    for uid in candidates:
+        data.uID = uid
+        if _shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(data)):
+            _tray_ids[host_hwnd] = uid
+            return uid
+    _tray_ids.pop(host_hwnd, None)
+    return None

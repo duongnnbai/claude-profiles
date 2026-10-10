@@ -74,6 +74,26 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue((self.b.data_parent / 'Claude-Other').exists())
         self.assertEqual(self.b.removed_shortcuts, ['Work'])
 
+    def test_custom_colors(self):
+        self.assertEqual(core.normalize_color('Blue'), 'blue')
+        self.assertEqual(core.normalize_color('#3b82f6'), 'blue')        # a preset's value keeps its name
+        self.assertEqual(core.normalize_color('ff8800'), '#FF8800')
+        self.assertEqual(core.normalize_color('#48f'), '#4488FF')
+        for bad in ('', '#12345', 'blueish', '#GG0000'):
+            with self.assertRaises(ValueError):
+                core.normalize_color(bad)
+        self.assertEqual(core.color_hex('teal'), core.COLORS['teal'])
+        self.assertEqual(core.color_hex('#FF8800'), '#FF8800')
+        p = core.create_profile(self.b, 'Club', '#ff8800')
+        self.assertEqual(p.color, '#FF8800')
+        self.assertEqual(core.list_profiles(self.b)[0].color, '#FF8800')
+        (p.data_dir / core.MARKER).write_text(json.dumps({'name': 'Club', 'color': 'nope'}))
+        self.assertEqual(core.list_profiles(self.b)[0].color, 'blue')     # unknown color: the default
+        with tempfile.TemporaryDirectory() as tmp:
+            ico = icons.icon_file(Path(tmp), '#FF8800', 'ico')
+            self.assertEqual(ico.name, 'spark-ff8800-3.ico')
+            self.assertTrue(ico.stat().st_size > 0)
+
     def test_keeps_foreign_config_dir(self):
         (self.b.home / '.claude-work').mkdir()
         p = core.create_profile(self.b, 'Work', 'blue')

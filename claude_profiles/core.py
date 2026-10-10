@@ -26,6 +26,31 @@ COLORS = {
     'purple': '#8B5CF6', 'teal': '#0D9488', 'red': '#DC2626', 'yellow': '#CA8A04',
 }
 COLOR_LABELS = {k: k.capitalize() for k in COLORS}
+_HEX_RE = re.compile(r'^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$')
+
+
+def normalize_color(text: str) -> str:
+    """A preset name ('blue') or a hex color ('#3B82F6', '3b82f6', '#48f') -> the preset name when
+    it matches one, else '#RRGGBB'. Raises ValueError for anything else."""
+    text = (text or '').strip()
+    key = text.lower()
+    if key in COLORS:
+        return key
+    m = _HEX_RE.match(text)
+    if not m:
+        raise ValueError('Enter a color as #RRGGBB (for example #3B82F6).')
+    h = m.group(1).upper()
+    if len(h) == 3:
+        h = ''.join(c * 2 for c in h)
+    for name, value in COLORS.items():
+        if value.upper() == '#' + h:
+            return name
+    return '#' + h
+
+
+def color_hex(color: str) -> str:
+    """The '#RRGGBB' value of a stored profile color (a preset name or a hex string)."""
+    return COLORS.get(color, color)
 
 
 class ClaudeNotFound(RuntimeError):
@@ -90,8 +115,10 @@ def _profile_from_dir(backend, data_dir: Path, meta) -> Profile:
     if isinstance(meta, dict):
         if meta.get('name'):
             name = str(meta['name'])
-        if meta.get('color') in COLORS:
-            color = meta['color']
+        try:
+            color = normalize_color(str(meta.get('color') or ''))
+        except ValueError:
+            pass
     return Profile(name, slug, color, data_dir, backend.home / f'.claude-{slug.lower()}')
 
 
@@ -148,6 +175,7 @@ def create_profile(backend, name: str, color: str) -> Profile:
         raise ValueError('The name needs at least one letter or digit (A-Z, 0-9).')
     if len(slug) > 30:
         raise ValueError('The name is too long (30 characters max).')
+    color = normalize_color(color)
     data_dir = backend.data_parent / f'Claude-{slug}'
     if data_dir.exists():
         raise ValueError(f'{data_dir} already exists. Pick another name.')

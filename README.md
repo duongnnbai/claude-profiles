@@ -83,7 +83,8 @@ You need **one account per profile, with a different email address for each**.
 
    (`python3` on macOS, `py -3` on Windows if `python` is not on your PATH.)
 
-3. Open **Claude Profiles**, click **+ New Profile**, enter a name and pick a color.
+3. Open **Claude Profiles**, click **+ New Profile**, enter a name and pick a color: one of the
+   presets, a hex value such as `#FF8800`, or **Choose...** for the system color picker.
 
    <img src="docs/images/new-profile.png" width="380" alt="New profile dialog">
 
@@ -99,7 +100,7 @@ Each card has a **...** menu (or right-click the card):
 | Menu item | What it does |
 |---|---|
 | Open data folder | Opens the profile's folder in File Explorer / Finder |
-| Color | Changes the card and shortcut color |
+| Color | Changes the card, shortcut, taskbar and tray color: one of the presets, or **Custom...** for any color |
 | Create Desktop shortcut (Windows) / Create app in ~/Applications (macOS) | Adds `Claude <Name>` that opens this profile directly |
 | Receive Google/SSO sign-in link (experimental, Windows only) | Sends `claude://` sign-in links to this profile. See [Troubleshooting](docs/TROUBLESHOOTING.md#the-sign-in-lands-in-the-wrong-window) |
 | Quit profile | Closes that profile's Claude |
@@ -168,6 +169,27 @@ backend for your OS in [`claude_profiles/platforms/`](claude_profiles/platforms)
 ```bash
 python -m unittest discover -s tests
 ```
+
+## Changelog
+
+### Unreleased
+
+- **Any color for a profile.** The new-profile dialog takes a hex value or opens the system color
+  picker next to the presets, and the card's **Color** menu has a **Custom...** entry. Preset
+  names keep working, so existing profiles are unchanged.
+- **Windows:** each profile's system-tray icon now shows the profile's color, and its tooltip
+  the profile's name, so running profiles can be told apart in the tray as well as on the
+  taskbar. The color is applied when the profile starts and re-applied while Claude Profiles is
+  open, the same way as the taskbar button. The default Claude's tray icon is never changed.
+
+### 2.0.0
+
+- First release of the Python app, replacing the PowerShell `ClaudeProfiles.ps1`.
+- Profiles run the installed Claude instead of a private copy; profiles are moved out of
+  `%APPDATA%` on first start.
+- Colored taskbar button and shortcut per profile (Windows), launcher apps in `~/Applications`
+  (macOS), Claude Code isolation through `CLAUDE_CONFIG_DIR`, experimental `claude://` sign-in
+  routing (Windows).
 
 ## License
 

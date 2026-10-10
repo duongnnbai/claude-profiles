@@ -11,7 +11,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from .core import COLORS
+from .core import COLORS, color_hex
 
 
 def hex_to_rgb(color: str) -> tuple:
@@ -126,7 +126,7 @@ def draw_icon(color: str, size: int) -> bytes:
         left, right = hex_to_rgb(COLORS['orange']), hex_to_rgb(COLORS['blue'])
         fill = lambda x, y: left if x < h else right   # noqa: E731
     else:
-        fill = hex_to_rgb(COLORS[color])
+        fill = hex_to_rgb(color_hex(color))
     ras.draw(square, (0, 0, size, size), fill)
     c = size / 2
     segs = []
@@ -164,7 +164,8 @@ def icns_from_pngs(pngs: dict) -> bytes:
 def icon_file(icon_dir: Path, color: str, ext: str = 'png') -> Path:
     """Path to a cached icon file (png, ico or icns), drawn on first use."""
     # Explorer caches icons by path: a new name whenever the artwork or format changes.
-    path = icon_dir / f'spark-{color}-3.{ext}'
+    tag = color.lstrip('#').lower()   # 'blue' or '3b82f6'
+    path = icon_dir / f'spark-{tag}-3.{ext}'
     if not path.exists():
         icon_dir.mkdir(parents=True, exist_ok=True)
         if ext == 'icns':

@@ -10,7 +10,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
-from tkinter import font as tkfont, messagebox, ttk
+from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
 from . import APP_TITLE, core, icons
 
@@ -119,7 +119,7 @@ class Card:
         self.dot = c.create_image(cx, self.state_y, anchor='w')
         self.state = c.create_text(cx, self.state_y, anchor='w', fill=MUTED, font=app.f_small)
         self.button = Pill(app, c, m + px(16), m + px(166), w - px(32), px(30), 'Launch',
-                           core.COLORS[profile.color], '#FFFFFF', CARD_BG, lambda: app.launch(profile))
+                           core.color_hex(profile.color), '#FFFFFF', CARD_BG, lambda: app.launch(profile))
         self.menu = c.create_text(m + w - px(21), m + px(19), text='⋯', fill='#9A978F', font=app.f_menu)
         c.tag_bind(self.menu, '<Enter>', lambda e: (c.itemconfigure(self.menu, fill=TEXT), c.configure(cursor='hand2')))
         c.tag_bind(self.menu, '<Leave>', lambda e: (c.itemconfigure(self.menu, fill='#9A978F'), c.configure(cursor='')))
@@ -184,10 +184,22 @@ class NewProfileDialog:
             item = self.swatches.create_image(i * step, 0, anchor='nw')
             self.swatches.tag_bind(item, '<ButtonRelease-1>', lambda e, k=key: self.pick(k))
             self.swatch_items[key] = item
-        self.pick(self.color)
+        custom = tk.Frame(body, bg=CARD_BG)
+        custom.pack(anchor='w', fill='x', pady=(px(8), 0))
+        tk.Label(custom, text='Or any color', font=app.f_tiny, fg=MUTED, bg=CARD_BG).pack(side='left')
+        self.hex_var = tk.StringVar(master=top)
+        self.hex = tk.Entry(custom, font=app.f_entry, width=9, relief='flat', bg='#FFFFFF', fg=TEXT,
+                            textvariable=self.hex_var, insertbackground=TEXT, highlightthickness=1,
+                            highlightbackground='#CFCCC4', highlightcolor=core.COLORS['blue'])
+        self.hex.pack(side='left', padx=(px(8), 0), ipady=px(3))
+        self.preview = tk.Label(custom, bg=CARD_BG)
+        self.preview.pack(side='left', padx=(px(6), 0))
+        ttk.Button(custom, text='Choose...', command=self.choose).pack(side='left', padx=(px(6), 0))
+        self.hex_var.trace_add('write', lambda *_: self.typed())
         self.err = tk.Label(body, text='', font=app.f_small, fg='#DC2626', bg=CARD_BG, justify='left',
                             wraplength=px(330))
         self.err.pack(anchor='w', pady=(px(10), 0))
+        self.pick(self.color)
         buttons = tk.Frame(body, bg=CARD_BG)
         buttons.pack(anchor='e', pady=(px(10), 0))
         ttk.Button(buttons, text='Cancel', command=top.destroy).pack(side='left')
@@ -202,18 +214,43 @@ class NewProfileDialog:
         self.name.focus_set()
         top.grab_set()
 
-    def pick(self, key):
-        self.color = key
+    def pick(self, color):
+        """Select a preset name or a '#RRGGBB' color; the swatches and the hex box follow."""
+        self.color = color
         px = self.app.px
         for k, item in self.swatch_items.items():
-            selected = k == key
+            selected = k == color
             img = self.app.photo(('swatch', k, selected), lambda k=k, s=selected: icons.swatch_png(
                 px(28), core.COLORS[k], s, ring_width=px(2), gap=px(3)))
             self.swatches.itemconfigure(item, image=img)
+        shown = core.color_hex(color)
+        try:
+            typed_same = core.normalize_color(self.hex_var.get()) == color
+        except ValueError:
+            typed_same = False
+        if not typed_same:
+            self.hex_var.set(shown)   # typed() then sees the same color and stops
+        self.preview.configure(image=self.app.dot_image(shown, 14))
+        self.err.configure(text='')
+
+    def typed(self):
+        try:
+            color = core.normalize_color(self.hex_var.get())
+        except ValueError:
+            self.preview.configure(image=self.app.dot_image('#CFCCC4', 14))
+            return
+        if color != self.color:
+            self.pick(color)
+
+    def choose(self):
+        _, chosen = colorchooser.askcolor(color=core.color_hex(self.color), parent=self.top, title='Profile color')
+        if chosen:
+            self.pick(core.normalize_color(chosen))
 
     def create(self):
         try:
-            self.result = core.create_profile(self.app.b, self.name.get(), self.color)
+            color = core.normalize_color(self.hex_var.get()) if self.hex_var.get().strip() else self.color
+            self.result = core.create_profile(self.app.b, self.name.get(), color)
         except Exception as e:
             self.err.configure(text=str(e))
             return
@@ -476,6 +513,12 @@ class App:
                 colors.add_radiobutton(label=label, value=key, variable=self._color_var, compound='left',
                                        image=self.dot_image(core.COLORS[key], 12),
                                        command=lambda k=key: self.set_color(profile, k))
+            colors.add_separator()
+            custom = profile.color not in core.COLORS
+            colors.add_radiobutton(label=f'Custom ({profile.color})...' if custom else 'Custom...',
+                                   value=profile.color if custom else '<custom>', variable=self._color_var,
+                                   compound='left', image=self.dot_image(core.color_hex(profile.color), 12),
+                                   command=lambda: self.choose_color(profile))
             menu.add_cascade(label='Color', menu=colors)
             menu.add_command(label=self.b.shortcut_menu_label, command=lambda: self.create_shortcut(profile))
             if self.b.supports_signin_route:
@@ -497,6 +540,12 @@ class App:
             else:
                 raise RuntimeError('The data folder does not exist yet. Launch the profile once first.')
         self.run_bg(work)
+
+    def choose_color(self, profile):
+        _, chosen = colorchooser.askcolor(color=core.color_hex(profile.color), parent=self.root,
+                                          title=f'Color for {profile.name}')
+        if chosen:
+            self.set_color(profile, core.normalize_color(chosen))
 
     def set_color(self, profile, color):
         profile.color = color

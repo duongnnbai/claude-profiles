@@ -210,6 +210,57 @@ class WindowsShellTests(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows only')
+class WindowsLaunchTests(unittest.TestCase):
+    def test_launch_does_not_depend_on_powershell(self):
+        import os
+        from unittest import mock
+        from claude_profiles.platforms import windows
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            env = {'USERPROFILE': str(t / 'home'), 'APPDATA': str(t / 'roaming'), 'LOCALAPPDATA': str(t / 'local')}
+            for d in env.values():
+                Path(d).mkdir()
+            alias = t / 'local' / 'Microsoft' / 'WindowsApps' / windows.DEFAULT_ALIAS
+            alias.parent.mkdir(parents=True)
+            alias.write_text('')
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(windows, '_powershell', side_effect=RuntimeError('PowerShell is broken')):
+                b = windows.WindowsBackend()
+                self.assertTrue(b.claude_installed())        # the alias is enough to start a profile
+                self.assertEqual(b.launcher_exe(), alias)
+                self.assertIsNone(b.package())                 # no cache yet
+                self.assertIsNone(b.claude_version())
+                # A cached answer is used when PowerShell fails and its folder still exists.
+                (t / 'local' / 'ClaudeProfiles').mkdir()
+                (t / 'local' / 'ClaudeProfiles' / windows.PACKAGE_CACHE).write_text(json.dumps(
+                    {'version': '9.9', 'location': str(t), 'family': 'Claude_x', 'appId': 'Claude', 'exe': 'app\\Claude.exe'}))
+                b._package = None
+                self.assertEqual(b.claude_version(), '9.9')
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(windows, '_powershell', return_value=json.dumps(
+                        {'version': '1.0', 'location': str(t), 'family': 'Claude_x', 'appId': 'Claude',
+                         'exe': 'app\\Claude.exe', 'alias': windows.DEFAULT_ALIAS})):
+                b = windows.WindowsBackend()
+                self.assertEqual(b.claude_version(), '1.0')    # a fresh answer replaces the cache
+                self.assertEqual(json.loads((t / 'local' / 'ClaudeProfiles' / windows.PACKAGE_CACHE).read_text())['version'], '1.0')
+
+    def test_launch_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core.set_log_dir(Path(tmp))
+            try:
+                core.log('hello')
+                text = (Path(tmp) / core.LOG_NAME).read_text(encoding='utf-8')
+                self.assertRegex(text, r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[\d+\] hello\n$')
+                (Path(tmp) / core.LOG_NAME).write_text('x' * (core.LOG_MAX_BYTES + 10) + '\nlast\n', encoding='utf-8')
+                core.log('after')
+                lines = (Path(tmp) / core.LOG_NAME).read_text(encoding='utf-8').splitlines()
+                self.assertEqual(lines[-2], 'last')            # trimmed to the tail, then appended
+                self.assertTrue(lines[-1].endswith(' after'))
+            finally:
+                core.set_log_dir(Path(tmp) / 'unused')
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'Windows only')
 class WindowsMigrationTests(unittest.TestCase):
     def test_moves_profiles_out_of_appdata_and_removes_copy(self):
         import os
@@ -240,6 +291,54 @@ class WindowsMigrationTests(unittest.TestCase):
             self.assertEqual(len(messages), 2)
             [p] = core.list_profiles(b)
             self.assertEqual((p.name, p.data_dir), ('Work', new))
+
+    def test_removes_claude_handler_that_points_at_removed_copy(self):
+        import os
+        import winreg
+        from unittest import mock
+        from claude_profiles.platforms import windows
+        scratch = r'Software\ClaudeProfilesTest\claude'
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            env = {'USERPROFILE': str(t / 'home'), 'APPDATA': str(t / 'roaming'), 'LOCALAPPDATA': str(t / 'local')}
+            for d in env.values():
+                Path(d).mkdir()
+            root = t / 'local' / 'ClaudeProfiles'
+            stale = root / 'app' / 'claude.exe'      # the PowerShell version's private copy, long gone
+            try:
+                with mock.patch.dict(os.environ, env):
+                    b = windows.WindowsBackend()
+                    b.proto_class = scratch
+                    # A handler pointing at a program outside our folder is somebody else's: untouched.
+                    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scratch + r'\shell\open\command') as k:
+                        winreg.SetValueEx(k, '', 0, winreg.REG_SZ, f'"{t / "elsewhere" / "claude.exe"}" "%1"')
+                    self.assertEqual(b.migrate(), [])
+                    self.assertTrue(windows._key_exists(scratch))
+                    # The old copy's handler is removed, root key included.
+                    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scratch) as k:
+                        winreg.SetValueEx(k, 'URL Protocol', 0, winreg.REG_SZ, '')
+                    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scratch + r'\shell\open\command') as k:
+                        winreg.SetValueEx(k, '', 0, winreg.REG_SZ, f'"{stale}" "%1"')
+                    self.assertEqual(b.route_exe(), stale)
+                    messages = b.migrate()
+                    self.assertEqual(len(messages), 1)
+                    self.assertIn('claude://', messages[0])
+                    self.assertFalse(windows._key_exists(scratch))
+                    self.assertEqual(b.migrate(), [])
+                    # Our own route survives migrate() and is removed cleanly by clear_signin_route().
+                    p = core.create_profile(b, 'Work', 'green')
+                    b.set_signin_route(p)
+                    self.assertEqual(b.migrate(), [])
+                    self.assertEqual(b.route_slug(), 'Work')
+                    self.assertEqual(b.route_exe(), b.launcher_exe())
+                    b.clear_signin_route()
+                    self.assertFalse(windows._key_exists(scratch))
+                    self.assertEqual(b.route_slug(), '')
+            finally:
+                if windows._key_exists(scratch):
+                    windows._delete_key_tree(winreg.HKEY_CURRENT_USER, scratch)
+                if windows._key_exists(r'Software\ClaudeProfilesTest'):
+                    windows._delete_key_tree(winreg.HKEY_CURRENT_USER, r'Software\ClaudeProfilesTest')
 
 
 class IconTests(unittest.TestCase):

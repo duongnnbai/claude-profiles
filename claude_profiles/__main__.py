@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 
 from . import APP_TITLE, core
 from .platforms import UnsupportedPlatform, get_backend
@@ -14,6 +15,7 @@ def say(text: str = '') -> None:
 
 
 def error(text: str, dialog: bool = False) -> None:
+    core.log(f'error: {text}')
     if sys.stderr:
         print(f'Error: {text}', file=sys.stderr)
     if dialog or not sys.stderr:
@@ -22,6 +24,7 @@ def error(text: str, dialog: bool = False) -> None:
             from tkinter import messagebox
             root = tk.Tk()
             root.withdraw()
+            root.attributes('-topmost', True)   # launched from a shortcut: do not hide behind other windows
             messagebox.showerror(APP_TITLE, text, parent=root)
             root.destroy()
         except Exception:
@@ -82,6 +85,8 @@ def main(argv=None) -> int:
     except UnsupportedPlatform as e:
         error(str(e))
         return 2
+    core.set_log_dir(backend.root)
+    core.log(f'run {sys.argv[1:] or ["(window)"]} python={sys.executable}')
     if not args.uninstall:
         try:
             for msg in backend.migrate():
@@ -97,8 +102,10 @@ def main(argv=None) -> int:
             msg = core.open_profile(backend, target)
             if msg:
                 say(msg)
+            core.log(f'done {args.launch}: {msg or "focused"}')
             return 0
         except Exception as e:
+            core.log(traceback.format_exc().rstrip())
             error(str(e), dialog=True)
             return 1
 

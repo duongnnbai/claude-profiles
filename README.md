@@ -174,6 +174,13 @@ python -m unittest discover -s tests
 
 ### Unreleased
 
+- **Launch log and sturdier launches.** Every launch and error is written to
+  `claude-profiles.log` in the app folder, so a shortcut that "does nothing" can be diagnosed. On
+  Windows a profile starts through the `claude-desktop.exe` alias without waiting for PowerShell,
+  the package query falls back to its last answer, and error dialogs from shortcuts open on top.
+- **Fix (Windows):** a `claude://` link handler left behind by the old PowerShell version could point
+  at the private copy of Claude that this version removes, which would break browser sign-ins and
+  "Open in Claude" links for every profile. The app now removes such a stale handler on startup.
 - **Any color for a profile.** The new-profile dialog takes a hex value or opens the system color
   picker next to the presets, and the card's **Color** menu has a **Custom...** entry. Preset
   names keep working, so existing profiles are unchanged.

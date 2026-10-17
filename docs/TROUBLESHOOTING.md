@@ -82,6 +82,31 @@ $env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"; claude
 CLAUDE_CONFIG_DIR=~/.claude-work claude
 ```
 
+## Nothing happens when I click a profile's shortcut or taskbar button
+
+Shortcuts run the app without a console, so an error there has nowhere to go. Since 2.1 every
+launch and every error is written to `%LOCALAPPDATA%\ClaudeProfiles\claude-profiles.log`
+(Windows) or `~/Library/Application Support/ClaudeProfiles/claude-profiles.log` (macOS). Open it and
+look at the last lines: a `start` line means Claude was asked to start, an `error:` line says what
+went wrong. Starting a profile on Windows no longer waits for PowerShell: as long as Claude's
+`claude-desktop.exe` alias exists, the profile starts even if `Get-AppxPackage` is slow or broken
+after a Windows update. Errors from a shortcut launch now open their dialog on top of other windows.
+
+## Browser sign-in or "Open in Claude" links do nothing (Windows)
+
+Links of the form `claude://...` go to whatever program is registered for the `claude:` protocol.
+The old PowerShell version could register its private copy of Claude for that protocol. This
+version removes the copy, so such a registration would point at a program that no longer exists.
+Opening Claude Profiles (or any of its shortcuts) once removes a registration like that and prints
+`Removed the claude:// link handler...` on the command line; Claude's own registration takes over
+again. To check what the links run, use Python, `reg.exe` or Windows PowerShell 5.1, not the Store
+version of PowerShell, which shows its own virtualized copy of that registry branch. To remove it
+by hand:
+
+```bash
+reg delete "HKCU\Software\Classes\claude" /f
+```
+
 ## A profile's taskbar button or tray icon is orange instead of its color (Windows)
 
 The color is applied when the profile starts, and every few seconds while Claude Profiles is open.

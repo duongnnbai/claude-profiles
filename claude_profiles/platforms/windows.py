@@ -29,7 +29,9 @@ from .base import Backend, Proc, flag_value, is_helper
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-PROTO_SHELL = r'Software\Classes\claude\shell'
+PROTO_CLASS = r'Software\Classes\claude'      # the claude:// protocol handler (HKCU)
+DEFAULT_ALIAS = 'claude-desktop.exe'            # the package's app execution alias, stable across updates
+PACKAGE_CACHE = 'package.json'                  # the last successful Get-AppxPackage answer
 
 _PACKAGE_QUERY = r'''
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -49,9 +51,15 @@ if ($p) {
 }
 '''
 
+def _powershell_exe() -> str:
+    """Windows PowerShell 5.1 by full path: the PATH lookup can find a Store pwsh instead."""
+    exe = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
+    return str(exe) if exe.is_file() else 'powershell.exe'
+
+
 def _powershell(script: str, env: Optional[dict] = None) -> str:
     r = subprocess.run(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        [_powershell_exe(), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
         capture_output=True, env=env, creationflags=CREATE_NO_WINDOW, timeout=60)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.decode('utf-8', 'replace').strip() or 'PowerShell failed.')
@@ -220,12 +228,30 @@ def _key_exists(path: str) -> bool:
         return False
 
 
+def _default_value(path: str) -> Optional[str]:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            value, kind = winreg.QueryValueEx(key, '')
+    except OSError:
+        return None
+    return value if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) else None
+
+
+def _has_subkeys(path: str) -> bool:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            return winreg.QueryInfoKey(key)[0] > 0
+    except OSError:
+        return False
+
+
 # ---- Backend -------------------------------------------------------------------
 
 class WindowsBackend(Backend):
     name = 'windows'
     not_found_message = 'Claude Desktop was not found. Install it from claude.ai/download.'
     relaunch_shows_window = True
+    proto_class = PROTO_CLASS   # tests point this at a scratch key
     supports_signin_route = True
     supports_taskbar_branding = True
     shortcut_menu_label = 'Create Desktop shortcut'
@@ -246,11 +272,48 @@ class WindowsBackend(Backend):
     # ---- The installed Claude (MSIX)
 
     def package(self, max_age: float = 30.0) -> Optional[dict]:
+        """The installed Claude package, from PowerShell. If PowerShell fails (slow or broken after
+        a Windows update), the answer from the last successful run is used instead, as long as the
+        package folder it names still exists."""
         if self._package is None or time.monotonic() - self._package_time > max_age:
-            out = _powershell(_PACKAGE_QUERY)
-            self._package = json.loads(out) if out else {}
+            cache = self.root / PACKAGE_CACHE
+            try:
+                out = _powershell(_PACKAGE_QUERY)
+                self._package = json.loads(out) if out else {}
+                if self._package:
+                    try:
+                        self.root.mkdir(parents=True, exist_ok=True)
+                        cache.write_text(out, encoding='utf-8')
+                    except OSError:
+                        pass
+            except Exception as e:   # subprocess errors, timeouts, bad JSON
+                core.log(f'package query failed: {e!r}; using the cached answer')
+                self._package = {}
+                try:
+                    cached = json.loads(cache.read_text(encoding='utf-8'))
+                    if Path(cached.get('location', '')).is_dir():
+                        self._package = cached
+                except (OSError, ValueError):
+                    pass
             self._package_time = time.monotonic()
         return self._package or None
+
+    def alias_exe(self) -> Optional[Path]:
+        """The app execution alias, if the package registered one. Needs no PowerShell."""
+        for name in filter(None, [(self._package or {}).get('alias'), DEFAULT_ALIAS]):
+            alias = self.local / 'Microsoft' / 'WindowsApps' / name
+            if os.path.lexists(alias):
+                return alias
+        return None
+
+    def claude_installed(self) -> bool:
+        return self.alias_exe() is not None or bool(self.package())
+
+    def describe_launcher(self) -> str:
+        try:
+            return str(self.launcher_exe())
+        except Exception as e:
+            return f'(no launcher: {e})'
 
     def claude_version(self) -> Optional[str]:
         pkg = self.package()
@@ -263,14 +326,14 @@ class WindowsBackend(Backend):
         return Path(os.environ['LOCALAPPDATA']) / 'Packages' / pkg['family'] / 'LocalCache' / 'Roaming' / 'Claude'
 
     def launcher_exe(self) -> Path:
-        """The execution alias (stable across updates); the package's own exe if the user turned it off."""
+        """The execution alias (stable across updates, needs no PowerShell); the package's own exe
+        if the user turned the alias off."""
+        alias = self.alias_exe()
+        if alias:
+            return alias
         pkg = self.package()
         if not pkg:
             raise core.ClaudeNotFound(self.not_found_message)
-        if pkg.get('alias'):
-            alias = self.local / 'Microsoft' / 'WindowsApps' / pkg['alias']
-            if os.path.lexists(alias):
-                return alias
         return Path(pkg['location']) / pkg.get('exe', r'app\Claude.exe')
 
     def footer_text(self) -> str:
@@ -311,6 +374,8 @@ class WindowsBackend(Backend):
             if not any(p.exe and core.norm_path(p.exe).startswith(prefix) for p in list_processes()):
                 core.rmtree(copy)
                 messages.append('Removed the old private copy of Claude.')
+        if self.drop_stale_route():
+            messages.append('Removed the claude:// link handler that pointed at the old copy of Claude.')
         return messages
 
     # ---- Processes
@@ -454,26 +519,61 @@ class WindowsBackend(Backend):
 
     # ---- claude:// sign-in link routing (experimental)
 
+    @property
+    def proto_shell(self) -> str:
+        return self.proto_class + r'\shell'
+
     def route_slug(self) -> str:
         try:
             return self.route_file.read_text(encoding='ascii').strip()
         except OSError:
             return ''
 
+    def route_exe(self) -> Optional[Path]:
+        """The program the current claude:// handler in HKCU runs, if there is one."""
+        command = _default_value(self.proto_shell + r'\open\command')
+        if not command:
+            return None
+        try:
+            return Path(_split_cmdline(command)[0])
+        except (IndexError, ValueError):
+            return None
+
+    def drop_stale_route(self) -> bool:
+        """Delete a claude:// handler that points into this app's folder at a program that no longer
+        exists (the private copy of Claude that earlier versions ran). Such a handler would make
+        every claude:// link fail, for the default Claude too. Returns True if one was removed."""
+        exe = self.route_exe()
+        if not exe or exe.exists():
+            return False
+        if not core.norm_path(exe).startswith(core.norm_path(self.root) + '\\'):
+            return False   # not ours: never touch another program's registration
+        _delete_key_tree(winreg.HKEY_CURRENT_USER, self.proto_class)
+        if self.route_file.exists():
+            self.route_file.unlink()
+        return True
+
     def set_signin_route(self, profile) -> None:
-        if _key_exists(PROTO_SHELL) and not self.route_slug():
-            raise RuntimeError(f'HKCU\\{PROTO_SHELL} already exists and was not created by this app. '
+        self.drop_stale_route()
+        if _key_exists(self.proto_shell) and not self.route_slug():
+            raise RuntimeError(f'HKCU\\{self.proto_shell} already exists and was not created by this app. '
                                'Not overwriting it.')
         self._write_route(profile.data_dir)
         self.root.mkdir(parents=True, exist_ok=True)
         self.route_file.write_text(profile.slug, encoding='ascii')
 
     def _write_route(self, data_dir: Path) -> None:
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, PROTO_SHELL + r'\open\command') as key:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.proto_class) as key:
+            winreg.SetValueEx(key, '', 0, winreg.REG_SZ, 'URL:claude')   # a protocol key needs these two
+            winreg.SetValueEx(key, 'URL Protocol', 0, winreg.REG_SZ, '')
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.proto_shell + r'\open\command') as key:
             winreg.SetValueEx(key, '', 0, winreg.REG_SZ, f'"{self.launcher_exe()}" --user-data-dir="{data_dir}" "%1"')
 
     def clear_signin_route(self) -> None:
-        if self.route_slug() and _key_exists(PROTO_SHELL):
-            _delete_key_tree(winreg.HKEY_CURRENT_USER, PROTO_SHELL)
+        if self.route_slug() and _key_exists(self.proto_shell):
+            _delete_key_tree(winreg.HKEY_CURRENT_USER, self.proto_shell)
+            if _key_exists(self.proto_class) and not _has_subkeys(self.proto_class):
+                _delete_key_tree(winreg.HKEY_CURRENT_USER, self.proto_class)   # leave no empty protocol key behind
+        self.drop_stale_route()
         if self.route_file.exists():
             self.route_file.unlink()

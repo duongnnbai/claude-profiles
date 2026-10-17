@@ -57,6 +57,35 @@ class ClaudeNotFound(RuntimeError):
     pass
 
 
+# ---- Log ---------------------------------------------------------------------
+# Shortcuts run the app through pythonw.exe, which has no console: when a launch fails, nothing
+# would be seen. Every launch and every error is appended to <app folder>/claude-profiles.log.
+
+LOG_NAME = 'claude-profiles.log'
+LOG_MAX_BYTES = 256 * 1024
+_log_path: Optional[Path] = None
+
+
+def set_log_dir(folder: Path) -> None:
+    global _log_path
+    _log_path = folder / LOG_NAME
+
+
+def log(message: str) -> None:
+    """Append one line to the launch log. Never raises."""
+    if _log_path is None:
+        return
+    try:
+        _log_path.parent.mkdir(parents=True, exist_ok=True)
+        if _log_path.exists() and _log_path.stat().st_size > LOG_MAX_BYTES:
+            lines = _log_path.read_text(encoding='utf-8', errors='replace').splitlines()[-500:]
+            _log_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        with _log_path.open('a', encoding='utf-8') as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{os.getpid()}] {message}\n")
+    except OSError:
+        pass
+
+
 @dataclass
 class Profile:
     name: str
@@ -218,6 +247,7 @@ def profile_env(profile: Profile) -> dict:
 
 def start_profile(backend, profile: Profile) -> None:
     ensure_config_dir(profile)
+    log(f'start {profile.name}: {backend.describe_launcher()} --user-data-dir={profile.data_dir}')
     backend.start_profile_process(profile, profile_env(profile))
     _brand_when_shown(backend, profile)
 
@@ -256,7 +286,9 @@ def open_profile(backend, profile: Profile) -> str:
     pid = backend.running_map().get(profile.key)
     if pid:
         if backend.focus(pid):
+            log(f'focus {profile.name}: pid {pid} brought to the front')
             return ''
+        log(f'focus {profile.name}: pid {pid} has no visible window, starting again to show it')
         # The window is hidden in the tray: starting it again makes Claude show it.
         if not backend.relaunch_shows_window:
             raise RuntimeError(f"'{profile.name}' is running, but its window could not be brought "
@@ -267,9 +299,10 @@ def open_profile(backend, profile: Profile) -> str:
             start_profile(backend, profile)
         return f'Showing {profile.name}...'
     if profile.is_default:
+        log('start Default')
         backend.start_default()
         return 'Opening your default Claude...'
-    if not backend.claude_version():
+    if not backend.claude_installed():
         raise ClaudeNotFound(backend.not_found_message)
     start_profile(backend, profile)
     return f'Opening {profile.name}...'

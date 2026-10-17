@@ -53,6 +53,14 @@ class Backend:
 
     # The installed Claude
     def claude_version(self) -> Optional[str]: raise NotImplementedError
+
+    def claude_installed(self) -> bool:
+        """Whether a profile can be started. Backends may know this without the version."""
+        return bool(self.claude_version())
+
+    def describe_launcher(self) -> str:
+        """What a profile launch runs, for the log."""
+        return 'Claude'
     def default_data_dir(self) -> Optional[Path]: raise NotImplementedError
     def footer_text(self) -> str: raise NotImplementedError
 

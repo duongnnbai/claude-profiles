@@ -48,8 +48,10 @@ Claude updates need no special handling, and the process inherits the environmen
 with (that is how `CLAUDE_CONFIG_DIR` gets through).
 
 The app finds the package with `Get-AppxPackage -Name Claude` (one PowerShell call, cached for 30
-seconds), accepting only packages whose publisher is Anthropic, and reads the alias name from the
-package manifest. If you turned the alias off in *Settings > Apps > Advanced app settings > App
+seconds and saved to `package.json` so the last answer still works when PowerShell is slow or
+fails), accepting only packages whose publisher is Anthropic, and reads the alias name from the
+package manifest. Starting a profile does not wait for that call: if the alias exists, it is used
+directly. If you turned the alias off in *Settings > Apps > Advanced app settings > App
 execution aliases*, it starts the package's `app\Claude.exe` directly instead, which behaves the same.
 
 Your regular Claude (the **Default** card) is started the normal way,
@@ -145,9 +147,14 @@ your default profile instead of the new one.
     (Default) = "%LOCALAPPDATA%\Microsoft\WindowsApps\claude-desktop.exe" --user-data-dir="<profile folder>" "%1"
   ```
 
-  The link then reaches that profile. **Restore** deletes the `shell` subkey again. The app never
+  The link then reaches that profile. **Restore** deletes the key again. The app never
   overwrites a `shell` key that it did not create. Whether Windows prefers this key over the Store
   app's own registration can depend on your Windows version, which is why it is marked experimental.
+
+  Earlier versions registered their private copy of Claude as the `claude:` handler. Once that copy
+  is removed, such a key would send every `claude://` link, for the default Claude too, to a program
+  that no longer exists. On startup the app deletes a handler that points into its own folder at a
+  missing program; handlers that point anywhere else are left alone.
 - **Google / SSO in the browser, macOS:** there is no equivalent switch. Quit every other Claude
   (including the default one) before signing in, so the link can only reach the profile you are
   setting up.
@@ -156,7 +163,7 @@ your default profile instead of the new one.
 
 | Change | When | Undo |
 |---|---|---|
-| App folder (installed package, icons) | First launch / `--install` | `--uninstall` |
+| App folder (installed package, icons, `claude-profiles.log`, `package.json` cache) | First launch / `--install` | `--uninstall` |
 | `Claude-<Name>` data folder plus a `.claude-profile.json` marker | New profile | *Delete profile...* |
 | `~/.claude-<name>` plus a `.claude-profiles-owner` marker | New profile | *Delete profile...* |
 | Windows: Desktop / Start menu `.lnk` files | `--install`, *Create Desktop shortcut* | `--uninstall`, delete the file |

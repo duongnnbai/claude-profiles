@@ -174,6 +174,10 @@ python -m unittest discover -s tests
 
 ### Unreleased
 
+- **Shortcuts that explain themselves.** A shortcut whose files are missing now says so and where
+  it looked, and falls back to the folder the app was installed from. `Install.cmd` refuses to run
+  from a terminal inside Claude Desktop (or any Store app), whose sandbox would hide the installed
+  files from Windows, and the automatic refresh of the installed copy is skipped there.
 - **Launch log and sturdier launches.** Every launch and error is written to
   `claude-profiles.log` in the app folder, so a shortcut that "does nothing" can be diagnosed. On
   Windows a profile starts through the `claude-desktop.exe` alias without waiting for PowerShell,

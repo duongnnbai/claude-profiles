@@ -257,7 +257,7 @@ def brand_profile(backend, profile: Profile, pid: int, wait: float = 0.0) -> int
     if profile.is_default or not backend.supports_taskbar_branding:
         return 0
     install_package(backend)   # the taskbar button's relaunch shortcut runs the installed copy
-    return backend.brand_windows(profile, pid, launcher_python(), launcher_args('--launch', profile.slug), wait)
+    return backend.brand_windows(profile, pid, launcher_python(), launcher_args(backend.root, '--launch', profile.slug), wait)
 
 
 def _brand_when_shown(backend, profile: Profile, timeout: float = 30.0) -> None:
@@ -332,6 +332,13 @@ def install_package(backend, force: bool = False) -> Path:
     src, dst = package_dir(), backend.root / PACKAGE
     if norm_path(src) == norm_path(dst) or (not force and str(dst) in _installed):
         return dst
+    sandbox = backend.sandboxed_by()
+    if sandbox:
+        # Writes would land in that package's private folder and deleting would hit the real one:
+        # leave the installed copy alone. --install reports this to the user.
+        log(f'not refreshing the installed copy: this process runs in the sandbox of {sandbox}')
+        _installed.add(str(dst))
+        return dst
     stamp = backend.root / '.package-hash'
     current = _source_hash(src)
     if dst.exists() and not force:
@@ -360,10 +367,39 @@ def launcher_python() -> Path:
     return exe
 
 
-def launcher_args(*extra: str) -> list:
-    return ['-m', PACKAGE, *extra]
+NO_DIALOG_VAR = 'CLAUDE_PROFILES_NO_DIALOG'   # tests: report on stderr instead of a message box
+
+_BOOTSTRAP = (
+    "import os, sys\n"
+    "cli = {cli!r}\n"
+    "roots = [{root!r}, {source!r}]\n"
+    "hit = [p for p in roots if os.path.isfile(os.path.join(p, {package!r}, '__main__.py'))]\n"
+    "if not hit:\n"
+    "    m = 'The Claude Profiles files were not found in:\\n' + '\\n'.join(roots) + "
+    "'\\n\\nRun Install.cmd (Windows) or Install.command (macOS) from the downloaded folder again.'\n"
+    "    if os.environ.get({no_dialog!r}): sys.stderr.write(m + '\\n')\n"
+    "    elif sys.platform == 'win32':\n"
+    "        import ctypes; ctypes.windll.user32.MessageBoxW(0, m, {title!r}, 0x10 | 0x40000)\n"
+    "    else:\n"
+    "        import subprocess; subprocess.run(['osascript', '-e', 'display alert ' + repr({title!r}) + ' message ' + repr(m)])\n"
+    "    sys.exit(1)\n"
+    "sys.path.insert(0, hit[0])\n"
+    "from {package}.__main__ import main\n"
+    "sys.exit(main(cli))\n"
+)
+
+
+def launcher_args(root: Path, *cli: str) -> list:
+    """Arguments for a launcher shortcut. Shortcuts run through pythonw.exe (no console), so
+    ``-m claude_profiles`` with the installed copy missing would exit without a word. This
+    bootstrap imports the package from the installed copy in ``root``, falls back to the source
+    folder this code was installed from, and otherwise shows what is missing."""
+    from . import APP_TITLE
+    code = _BOOTSTRAP.format(cli=list(cli), root=str(root), source=str(package_dir().parent),
+                             package=PACKAGE, no_dialog=NO_DIALOG_VAR, title=APP_TITLE)
+    return ['-c', code]
 
 
 def create_profile_shortcut(backend, profile: Profile) -> Path:
     install_package(backend)
-    return backend.write_profile_shortcut(profile, launcher_python(), launcher_args('--launch', profile.slug))
+    return backend.write_profile_shortcut(profile, launcher_python(), launcher_args(backend.root, '--launch', profile.slug))

@@ -32,9 +32,16 @@ def error(text: str, dialog: bool = False) -> None:
 
 
 def cmd_install(backend) -> int:
+    sandbox = backend.sandboxed_by()
+    if sandbox:
+        raise RuntimeError(
+            f'This terminal runs inside the sandbox of the packaged app "{sandbox}" (for example a '
+            'terminal opened from Claude Desktop). Files written here are redirected into that '
+            "app's private folder and Windows cannot see them, so the shortcuts would not work.\n"
+            'Run Install.cmd from File Explorer, or from a terminal opened from the Start menu.')
     target = core.install_package(backend, force=True)
     python = core.launcher_python()
-    paths = backend.install_launchers(python, core.launcher_args())
+    paths = backend.install_launchers(python, core.launcher_args(backend.root))
     # Refresh profile shortcuts so they point at this version.
     for p in core.list_profiles(backend):
         if backend.profile_shortcut_path(p).exists():

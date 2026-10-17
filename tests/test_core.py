@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import struct
+from unittest import mock
 import sys
 import tempfile
 import unittest
@@ -226,12 +227,13 @@ class WindowsLaunchTests(unittest.TestCase):
             with mock.patch.dict(os.environ, env), \
                     mock.patch.object(windows, '_powershell', side_effect=RuntimeError('PowerShell is broken')):
                 b = windows.WindowsBackend()
+                self.assertIsNone(b.sandboxed_by())          # a plain process: writes land where they say
                 self.assertTrue(b.claude_installed())        # the alias is enough to start a profile
                 self.assertEqual(b.launcher_exe(), alias)
                 self.assertIsNone(b.package())                 # no cache yet
                 self.assertIsNone(b.claude_version())
                 # A cached answer is used when PowerShell fails and its folder still exists.
-                (t / 'local' / 'ClaudeProfiles').mkdir()
+                (t / 'local' / 'ClaudeProfiles').mkdir(exist_ok=True)
                 (t / 'local' / 'ClaudeProfiles' / windows.PACKAGE_CACHE).write_text(json.dumps(
                     {'version': '9.9', 'location': str(t), 'family': 'Claude_x', 'appId': 'Claude', 'exe': 'app\\Claude.exe'}))
                 b._package = None
@@ -243,6 +245,32 @@ class WindowsLaunchTests(unittest.TestCase):
                 b = windows.WindowsBackend()
                 self.assertEqual(b.claude_version(), '1.0')    # a fresh answer replaces the cache
                 self.assertEqual(json.loads((t / 'local' / 'ClaudeProfiles' / windows.PACKAGE_CACHE).read_text())['version'], '1.0')
+
+    def test_launcher_bootstrap(self):
+        import os
+        import subprocess
+        source = Path(core.package_dir()).parent
+        with tempfile.TemporaryDirectory() as tmp:
+            # The installed copy is missing: the shortcut falls back to the source checkout.
+            args = core.launcher_args(Path(tmp) / 'ClaudeProfiles', '--help')
+            self.assertEqual(args[0], '-c')
+            r = subprocess.run([sys.executable, *args], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('--launch', r.stdout)
+            # Both missing: a clear message, never a silent exit.
+            with mock.patch.object(core, 'package_dir', return_value=Path(tmp) / 'nowhere' / 'claude_profiles'):
+                args = core.launcher_args(Path(tmp) / 'ClaudeProfiles', '--launch', 'X')
+            r = subprocess.run([sys.executable, *args], capture_output=True, text=True, timeout=60,
+                               env={**os.environ, core.NO_DIALOG_VAR: '1'})
+            self.assertEqual(r.returncode, 1)
+            self.assertIn('were not found', r.stderr)
+            self.assertIn(str(Path(tmp) / 'ClaudeProfiles'), r.stderr)
+            self.assertIn('Install.cmd', r.stderr)
+            # The command survives a round trip through a Windows command line.
+            if sys.platform == 'win32':
+                r = subprocess.run(subprocess.list2cmdline([sys.executable, *core.launcher_args(source, '--help')]),
+                                   capture_output=True, text=True, timeout=60)
+                self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_launch_log(self):
         with tempfile.TemporaryDirectory() as tmp:

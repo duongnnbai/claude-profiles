@@ -309,6 +309,28 @@ class WindowsBackend(Backend):
     def claude_installed(self) -> bool:
         return self.alias_exe() is not None or bool(self.package())
 
+    def sandboxed_by(self) -> Optional[str]:
+        """Processes started from a packaged (MSIX) app, such as a terminal inside Claude Desktop,
+        inherit its file-system virtualization: what they write under %LOCALAPPDATA% lands in
+        <Packages>\\<package>\\LocalCache\\Local\\... and is invisible to Explorer and to shortcuts,
+        while deletions hit the real folder. Detected with a probe file: if it shows up under a
+        package's LocalCache, this process is sandboxed. Returns that package's folder name."""
+        probe = self.root / f'.sandbox-probe-{os.getpid()}'
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            probe.write_text('probe', encoding='ascii')
+            for pkg in (self.local / 'Packages').iterdir():
+                if (pkg / 'LocalCache' / 'Local' / self.root.name / probe.name).exists():
+                    return pkg.name
+        except OSError:
+            pass
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass
+        return None
+
     def describe_launcher(self) -> str:
         try:
             return str(self.launcher_exe())
@@ -483,10 +505,7 @@ class WindowsBackend(Backend):
         self._register(profile, python, args)
         app_id = self.profile_app_id(profile)
         ico = icons.icon_file(self.icon_dir, profile.color, 'ico')
-        relaunch = subprocess.list2cmdline([str(python), '-c',
-                                            f'import sys; sys.path.insert(0, {str(self.root)!r}); '
-                                            'from claude_profiles.__main__ import main; '
-                                            f'main(["--launch", {profile.slug!r}])'])
+        relaunch = subprocess.list2cmdline([str(python), *args])
         deadline = time.monotonic() + wait
         while True:
             shown = 0

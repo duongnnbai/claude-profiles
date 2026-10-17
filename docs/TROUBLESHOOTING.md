@@ -84,13 +84,22 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude
 
 ## Nothing happens when I click a profile's shortcut or taskbar button
 
-Shortcuts run the app without a console, so an error there has nowhere to go. Since 2.1 every
-launch and every error is written to `%LOCALAPPDATA%\ClaudeProfiles\claude-profiles.log`
-(Windows) or `~/Library/Application Support/ClaudeProfiles/claude-profiles.log` (macOS). Open it and
-look at the last lines: a `start` line means Claude was asked to start, an `error:` line says what
-went wrong. Starting a profile on Windows no longer waits for PowerShell: as long as Claude's
-`claude-desktop.exe` alias exists, the profile starts even if `Get-AppxPackage` is slow or broken
-after a Windows update. Errors from a shortcut launch now open their dialog on top of other windows.
+Shortcuts run the app without a console, so an error there has nowhere to go. Since 2.1 a shortcut
+that cannot find the app's files shows a message saying where it looked, and every launch and every
+error is written to `%LOCALAPPDATA%\ClaudeProfiles\claude-profiles.log` (Windows) or
+`~/Library/Application Support/ClaudeProfiles/claude-profiles.log` (macOS). Open it and look at the
+last lines: a `start` line means Claude was asked to start, an `error:` line says what went wrong.
+If the log has no line for your click at all, the shortcut's target did not run: run `Install.cmd`
+again from File Explorer.
+
+**Do not install or run the app from a terminal opened inside Claude Desktop** (its Code tab) or
+inside any other Store app. Such a terminal runs in that app's sandbox: files it writes under
+`%LOCALAPPDATA%` are redirected into the app's private `LocalCache` folder, which Explorer, the
+taskbar and your shortcuts cannot see, while files it deletes are deleted for real. `Install.cmd`
+refuses to run there and says so. Use File Explorer or a terminal from the Start menu.
+
+Starting a profile on Windows does not wait for PowerShell: as long as Claude's `claude-desktop.exe`
+alias exists, the profile starts even if `Get-AppxPackage` is slow or broken after a Windows update.
 
 ## Browser sign-in or "Open in Claude" links do nothing (Windows)
 

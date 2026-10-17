@@ -74,6 +74,18 @@ Earlier versions avoided package identity by running a private copy of Claude fr
 `%LOCALAPPDATA%\ClaudeProfiles\app`, and kept profiles in `%APPDATA%`. On startup this version moves
 those profiles to `%USERPROFILE%\ClaudeProfiles` and deletes the copy.
 
+### Windows: sandboxed terminals
+
+Child processes of a packaged app inherit its file-system and registry virtualization. A terminal
+opened from Claude Desktop's Code tab therefore sees a merged view: what it writes under
+`%LOCALAPPDATA%` goes to `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\...`, invisible to
+Explorer, the taskbar and shortcuts, while deletions reach the real folder. To avoid installing into
+that private folder (and deleting the real copy on refresh), the app writes a probe file into its
+folder and looks for it under every package's `LocalCache`; if found, `--install` refuses and the
+automatic refresh of the installed copy is skipped. The launcher shortcuts also no longer rely on the
+installed copy alone: their command looks for the package in the app folder, then in the folder the
+app was installed from, and shows a message if neither has it.
+
 ## macOS
 
 `Claude.app` can be run directly with extra arguments, so every profile runs the same installed

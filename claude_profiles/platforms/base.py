@@ -61,6 +61,10 @@ class Backend:
     def describe_launcher(self) -> str:
         """What a profile launch runs, for the log."""
         return 'Claude'
+
+    def sandboxed_by(self) -> Optional[str]:
+        """The packaged app whose file-system sandbox this process runs in, if any (Windows)."""
+        return None
     def default_data_dir(self) -> Optional[Path]: raise NotImplementedError
     def footer_text(self) -> str: raise NotImplementedError
 
